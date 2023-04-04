@@ -1,0 +1,111 @@
+#version 330
+
+in vec2 textureCoords;
+
+out vec4 out_Colour;
+
+uniform sampler2D modelTexture; // texture obtained from the first pass (normals+depth)
+uniform sampler2D randTexture; // randomized texture (1 color per pixel)
+
+uniform int N; // value used to determine the number of samples (depends on the strategy)
+uniform float radius; // maximum radius of the samples
+uniform int strat; // strategy number
+
+uniform vec3 randvecs[100]; // 100 randomized 3D vectors (not all of them have to be used at every moment)
+uniform vec3 randvecssep[20]; // 20 randomized orthogonal 3D vectors (not all of them have to be used at every moment)
+
+const int xsize = 1280; // size of the display
+const int ysize = 640;
+
+const float xstep = 1.0/xsize; // step to move to a neighbour pixel
+const float ystep = 1.0/ysize;
+
+const float pi = 3.141592653;
+
+
+void main(void){
+
+	vec3 norm = texture(modelTexture, vec2(textureCoords.x, textureCoords.y)).xyz; // normal from texture
+	vec3 normal = vec3((norm.x - 0.5)*2, (norm.y - 0.5)*2, (norm.z - 0.5)*2); // undo the computations done on the first pass
+	float depth = texture(modelTexture, vec2(textureCoords.x, textureCoords.y)).a; // depth value from the texture
+	
+	// obtain a random 3D vector from the random texture
+	vec3 pixelRandom = texture(randTexture, vec2(textureCoords.x/2+1, textureCoords.y/2+1)).xyz;
+	vec3 pixRandVec = vec3(pixelRandom.x*2-1, pixelRandom.y*2-1, pixelRandom.z*2-1);
+	
+	vec3 reflv, v, p_prime_normal, p_prime_norm, pixRandVec2D, randvecnorm;
+	vec2 p_prime, vrot;
+	
+	float total_occlusion = 0.0; // the occlusion value for this pixel
+	
+	if (strat < 2) { // No separable strategy inside this if condition
+	
+		int numsamples = N*N; // compute the number of samples
+		float fixed_radius = radius*(1-depth)*(1-depth); // Fix the radius value to make it depth-dependent
+	
+		for (int i = 0; i < numsamples; i++) { // For each of the samples
+			
+			// reflect the vector obtained from the uniform with the one obtained from the texture
+			reflv = normalize(reflect(randvecs[i], pixRandVec));
+			// multiply it by the radius to modify its reach
+			v = vec3(reflv.x * fixed_radius, reflv.y * fixed_radius, reflv.z * fixed_radius);
+			
+			p_prime = vec2(textureCoords.x + v.x*xstep, textureCoords.y + v.y*ystep); // obtain p_prime (name on the slides)
+			float p_prime_depth = texture(modelTexture, p_prime).a; // obtain the depth value on p_prime
+			
+			if (strat == 0) { // Strategy 1: Improving Depth-only SSAO
+				// if the depth on p_prime is smaller than on p (with an small offset to remove artifacts), increase occlusion
+				// also, if the difference in depth is to big, don't increase the occlusion
+				if (p_prime_depth < (depth - 0.01) && abs(p_prime_depth - depth) < 0.2) {
+					total_occlusion = total_occlusion + 1.0/numsamples; // increase depends on the number of samples
+				}
+			} else { // Strategy 2: Using Normals
+				// if the depth on p_prime is smaller than on p (with an small offset to remove artifacts), increase occlusion
+				if (p_prime_depth < (depth - 0.001)) {
+					p_prime_norm = texture(modelTexture, p_prime).xyz; // obtain the normal on p_prime
+					p_prime_normal = vec3((p_prime_norm.x - 0.5)*2, (p_prime_norm.y - 0.5)*2, (p_prime_norm.z - 0.5)*2); // fix the normal
+					// obtain the difference between the two normals by the cosine of the angle between them
+					float norm_diff = ( dot(normal,p_prime_normal) ) / ( length(normal)*length(p_prime_normal) );
+					total_occlusion = total_occlusion + (1.0-norm_diff)/(numsamples); // increase the occlusion term depending on that
+				}
+			}
+			
+		}
+		
+		if (strat == 0) { // only if we are in strategy 1
+			int a = 10; // use an exponential function to filter low occlusion levels
+			total_occlusion = (pow(a,total_occlusion)-1)/(a-1);
+		}
+	
+	} else { // Separable strategy
+	
+		int numsamples = 2*N; // compute the number of samples
+		float randRot = pixRandVec.x*pi/2; // obtain a random rotation between 0 and pi/2 (90º)
+		float fixed_radius = radius*(1-depth)*(1-depth); // Fix the radius value to make it depth-dependent
+	
+		for (int i = 0; i < numsamples; i++) { // for each sample
+			
+			randvecnorm = normalize(randvecssep[i]); // normalize the random vector
+			v = vec3(randvecnorm.x * fixed_radius, randvecnorm.y * fixed_radius, randvecnorm.z * fixed_radius); // mult by the radius
+			vrot = vec2(v.x*cos(randRot) - v.y*sin(randRot), v.x*sin(randRot) + v.y*cos(randRot)); // and rotate it
+			
+			p_prime = vec2(textureCoords.x + vrot.x*xstep, textureCoords.y + vrot.y*ystep); // obtain p_prime as before
+			float p_prime_depth = texture(modelTexture, p_prime).a; // and its depth
+			
+			// We will be using "Strategy 2: Using Normals" for the separable SSAO (arbitrary decision)
+			if (p_prime_depth < (depth - 0.001)) { // same code as before
+				p_prime_norm = texture(modelTexture, p_prime).xyz;
+				p_prime_normal = vec3((p_prime_norm.x - 0.5)*2, (p_prime_norm.y - 0.5)*2, (p_prime_norm.z - 0.5)*2);
+				float norm_diff = ( dot(normal,p_prime_normal) ) / ( length(normal)*length(p_prime_normal) );
+				total_occlusion = total_occlusion + (1.0-norm_diff)/(numsamples);
+			}
+			
+		}
+	
+	}
+	
+	// the final color depends on the occlusion term (inverted)
+	out_Colour = vec4(1-total_occlusion, 1-total_occlusion, 1-total_occlusion, 1.0);
+	if (depth < 0.001) out_Colour = vec4(0.5, 0.5, 0.6, 1.0); // Background colour
+
+}

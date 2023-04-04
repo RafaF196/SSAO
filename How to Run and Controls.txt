@@ -1,0 +1,19 @@
+- How to run the project:
+
+Since the project was developped on the Eclipse IDE, all the code, jars and natives are inside the "SRGGELab01.jar" file. Keep this executable java file with the res folder, it won't work otherwise.
+
+To run the application just execute the batch file "Run SRGGELab01.bat"
+
+Disclaimer: Everything was developped and tested on Windows, I can't guarantee it works on other operating systems.
+
+- Controls:
+
+Hold left click + drag mouse: Rotate camera over object.
+Roll middle mouse button: Zoom in-out towards the object.
+
+Up/Down arrows: Increase or decrease the amount of instances.
+C key: Change the object on the scene (3 in total).
+V key: Change the level of compression of the object.
+E key: Export the current model in different compression levels.
+
+
